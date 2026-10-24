@@ -30,6 +30,15 @@ SPEC.json is {"ops": [...]} and each op is one of:
   {"op": "legend_entry", "box": [x1,y1,x2,y2], "text": "= 3A 선택 시",
    "color": "#ef6c00"}
       A boxed legend line with a dotted swatch.
+  {"op": "copy_line", "box": [x1,y1,x2,y2], "row": y}   (or "col": x)
+      Rebuild the box from one clean row (for vertical roads/blocks) or column.
+      Clean where inpaint smears: a label lying across a road and a block edge.
+  {"op": "palette_fill", "boxes": [[x1,y1,x2,y2], ...], "region": [x1,y1,x2,y2],
+   "keep": [[...]], "tol": 14, "extra_rgb": [[r,g,b], ...]}
+      Erase pins, labels and dotted lines on a flat-coloured map (night insets,
+      pastel blocks): marks take the nearest clean pixel's colour, then the boxes
+      snap to the map's own fill colours. "keep" protects nearby labels;
+      "extra_rgb" adds small fills (a park) the palette sample may miss.
 """
 import argparse
 import json
@@ -181,8 +190,63 @@ def op_legend_entry(im, o):
     return im
 
 
+def op_copy_line(im, o):
+    # rebuild the box from one clean row (roads/blocks running vertically) or column (horizontally)
+    arr = np.array(im)
+    x1, y1, x2, y2 = o["box"]
+    if "row" in o:
+        arr[y1:y2, x1:x2] = arr[o["row"], x1:x2]
+    else:
+        arr[y1:y2, x1:x2] = arr[y1:y2, o["col"]][:, None]
+    return Image.fromarray(arr)
+
+
+def op_palette_fill(im, o):
+    # Erase labels, pins and dots on a flat-coloured map (dark night insets, pastel blocks)
+    # without the smear of inpainting: learn the map's own fill colours from `region`
+    # outside the boxes, treat anything in the boxes that is not one of them as a mark,
+    # give each mark pixel the colour of the nearest clean pixel, then snap the boxes to
+    # the palette so anti-aliased halos disappear too.
+    arr = to_cv(im)
+    h, w = arr.shape[:2]
+    rx1, ry1, rx2, ry2 = o.get("region", [0, 0, w, h])
+    inbox = np.zeros((h, w), bool)
+    for x1, y1, x2, y2 in o["boxes"]:
+        inbox[y1:y2, x1:x2] = True
+    keep = np.zeros((h, w), bool)
+    for x1, y1, x2, y2 in o.get("keep", []):
+        keep[y1:y2, x1:x2] = True
+    sample = arr[ry1:ry2, rx1:rx2][~inbox[ry1:ry2, rx1:rx2]].reshape(-1, 3).astype(np.float32)
+    k = o.get("k", 9)
+    _, lab, centers = cv2.kmeans(sample, k, None, (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1.0),
+                                 3, cv2.KMEANS_PP_CENTERS)
+    counts = np.bincount(lab.ravel(), minlength=k)
+    lo, hi = o.get("fill_brightness", [25, 135])
+    # map fills only: label whites, outline blacks and pin colours are dropped by brightness
+    good = (counts > counts.sum() * o.get("min_share", 0.012)) & (centers.max(axis=1) < hi) & (centers.max(axis=1) > lo)
+    palette = centers[good]
+    if o.get("extra_rgb"):  # small fills the sample misses (a park, one green block)
+        palette = np.vstack([palette, np.array([c[::-1] for c in o["extra_rgb"]], np.float32)])
+    dist = np.min(np.linalg.norm(arr[:, :, None, :].astype(np.float32) - palette[None, None], axis=3), axis=2)
+    mask = (inbox & ~keep & (dist > o.get("tol", 14))).astype(np.uint8)
+    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8)) & (inbox & ~keep)
+    _, labels = cv2.distanceTransformWithLabels(mask, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL)
+    ys, xs = np.nonzero(mask == 0)
+    lut = np.zeros((labels.max() + 1, 3), np.uint8)
+    lut[labels[ys, xs]] = arr[ys, xs]
+    m = mask.astype(bool)
+    arr[m] = lut[labels[m]]
+    flat = inbox & ~keep
+    px = arr[flat].astype(np.float32)
+    arr[flat] = palette[np.argmin(np.linalg.norm(px[:, None, :] - palette[None], axis=2), axis=1)].astype(np.uint8)
+    blur = cv2.medianBlur(arr, 5)
+    arr[flat] = blur[flat]
+    return to_pil(arr)
+
+
 OPS = {"strip_color": op_strip_color, "inpaint": op_inpaint, "fill": op_fill, "text": op_text,
-       "route": op_route, "badge": op_badge, "legend_entry": op_legend_entry}
+       "route": op_route, "badge": op_badge, "legend_entry": op_legend_entry,
+       "copy_line": op_copy_line, "palette_fill": op_palette_fill}
 
 
 def apply(args):

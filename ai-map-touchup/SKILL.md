@@ -20,9 +20,13 @@ Why: users notice these one round at a time ("오타 고쳐줘" → "중복 라�
 
 ## 2. Try the image tool's edit first, but verify
 
+Removing a stop from a map is more than its pin: also its label card, the route legs to and from it, its walker/train icons and the title or inset heading that names it. Put all of them on the audit list before editing.
+
 If the map came from a tool with an edit mode (Google Flow, Gemini), send one edit that lists every text fix explicitly and says "keep everything else exactly the same". Name exact strings to delete or replace. Then check the result against the audit list — edits often fix text but ignore line changes, or move things you didn't ask about.
 
-For Google Flow browser specifics (stay on the page until the edit finishes, the download menu, reCAPTCHA), read `references/flow-editing.md`.
+For Google Flow browser specifics (uploading a map that was not made in Flow, the rights dialog, staying on the page until the edit finishes, the download menu, reCAPTCHA), read `references/flow-editing.md`.
+
+Flow is good at whole-stop changes on an uploaded map when the instruction pins down the place by neighbouring labels: "add a dark blue pin numbered 6 on the green lawn just south of the "달링 쿼터" label, a white label card with "…" and "19:15–19:45", and a red dotted walking route from pin 2 to pin 6", or "remove pin 5 and its label card, fill with the surrounding background, renumber pin 6 to 5". Check that it did not degrade small text elsewhere (legend lines are the usual casualty); paste the old legend back with a crop if so.
 
 If the tool shows a CAPTCHA, an "unusual activity" notice or a connection error for its bot check, do not try to solve or get around it. Switch to step 3, which needs no external service, and tell the user why.
 
@@ -35,6 +39,8 @@ Requires Python 3 with `pillow`, `numpy` and `opencv-python-headless`. On Window
    - `strip_color` — remove all old route lines of one colour at once, with `protect` boxes around pins, legend swatches, coloured text and red-roofed buildings. Use this when routes are wrong enough to redraw; it's cleaner than erasing segment by segment.
    - `inpaint` — small leftovers: dots under protect boxes, a label lying on a road.
    - `fill` — labels on flat blocks (sample a clean patch of the same block). Large inpaint boxes smear road white into blocks, so prefer fill there.
+   - `copy_line` — a label lying across a road and the block next to it: rebuild the box from one clean row (vertical roads) or column (horizontal roads). Edges stay sharp where `fill` would leave a square patch.
+   - `palette_fill` — several pins, labels and dotted lines on a flat-coloured map (a dark night inset, pastel blocks). It learns the map's own fill colours, replaces marks with the nearest clean pixel and snaps the boxes to those colours, so halos and dots vanish without smears. Protect neighbouring labels with `keep` (a street name half inside a box gets eaten otherwise) and pass small fills the sample misses (a park, one green block) in `extra_rgb`; finish any leftover patch with a `fill`.
    - `text` — replacement labels; `angle` puts street names along their road (≈84–90° for north–south streets).
    - `route` — one op per leg, points along road centre lines, ending just short of the next pin. Each leg gets a mid-route arrow so direction stays readable where legs meet.
    - `badge` — "1 → 2" style tags beside each leg when legs share or cross roads.
@@ -49,7 +55,7 @@ Design rules that made the result readable:
 
 ## 4. Deliver
 
-Save finals with a new version suffix rather than overwriting earlier versions. If the maps live in a report, replace each image and confirm the report now shows the new files. In the summary, list what changed per map and be explicit about anything still imperfect (an approximate position, a faint smear), and remind that these are illustrations, not navigation maps.
+Save finals with a new version suffix rather than overwriting earlier versions. When a map exists in a date-free and a dated version, edit one and derive the other by redrawing only the title box, so both stay identical. If the maps live in a report, replace each image and confirm the report now shows the new files. In the summary, list what changed per map and be explicit about anything still imperfect (an approximate position, a faint smear), and remind that these are illustrations, not navigation maps.
 
 ## Privacy
 
